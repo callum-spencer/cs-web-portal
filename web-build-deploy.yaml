@@ -1,0 +1,83 @@
+name: Build, Push and Deploy
+
+on:
+  push:
+    branches:
+      - main  # Trigger on pushes to the main branch
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          registry: 1${REPOSITORY_URL}
+
+      - name: Build Docker image
+        run: |
+          docker build -t my-react-app .
+
+      - name: Tag Docker image
+        run: |
+          docker tag my-react-app:latest ${REPOSITORY_URL}/my-react-app:${TAG} 
+
+      - name: Push Docker image to ECR
+        run: |
+          docker push ${REPOSITORY_URL}/my-react-app:${TAG}  
+
+  deploy-staging:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Update ECS Task Definition for Staging
+        id: task-def-staging
+        uses: aws-actions/amazon-ecs-update-task-definition@v1
+        with:
+          task-definition: my-ecs-task-def-staging # Would change this to a env variable
+          container-name: my-react-app-container # Would change this to a env variable
+          image: ${REPOSITORY_URL}/my-react-app:latest/my-react-app:${TAG}  
+
+      - name: Deploy to ECS Staging Cluster
+        id: deploy-staging
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          cluster: staging-cluster-name  # Would change this to a env variable
+          service: my-react-app-service  # Would change this to a env variable
+          task-definition: my-ecs-task-def-staging # Would change this to a env variable
+
+  manual-approval:
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    steps:
+      - name: Wait for Manual Approval
+        run: echo "Waiting for manual approval before deploying to production"
+        env:
+          APPROVAL: ${{ github.event.inputs.approval }}
+        timeout-minutes: 60
+        if: ${{ github.event.inputs.approval != 'approved' }}
+
+  deploy-production:
+    runs-on: ubuntu-latest
+    needs: manual-approval
+    steps:
+      - name: Update ECS Task Definition for Production
+        id: task-def-prod
+        uses: aws-actions/amazon-ecs-update-task-definition@v1
+        with:
+          task-definition: my-ecs-task-def-prod # Would change this to a env variable
+          container-name: my-react-app-container # Would change this to a env variable
+          image: ${REPOSITORY_URL}/my-react-app:${TAG} 
+
+      - name: Deploy to ECS Production Cluster
+        id: deploy-prod
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          cluster: production-cluster-name  # Would change this to a env variable
+          service: my-react-app-service  # Would change this to a env variable
+          task-definition: my-ecs-task-def-prod # Would change this to a env variable
